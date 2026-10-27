@@ -6,6 +6,7 @@ const HOME = '/tmp/mid-prompt-test-home'
 function fixtures(on: Parameters<typeof mock.env>[0], files: Record<string, string>) {
   const submitted: string[] = []
   const registered: string[] = []
+  const clock = mock.clock(on)
 
   mock.env(on, { HOME, MID_PROMPT_DIR: DIR })
   on('fs.list', { path: DIR }, () => ({
@@ -33,12 +34,22 @@ function fixtures(on: Parameters<typeof mock.env>[0], files: Record<string, stri
     return { value: { command: e.name } }
   })
 
-  return { submitted, registered }
+  return { submitted, registered, clock }
 }
 
 const PRESENTATION = { surface: 'main' as const, width: 80 }
 const run = ($: any, command: string, args = '') =>
   $.command.run({ command, args, origin: { kind: 'sdk' }, presentation: PRESENTATION })
+
+const autocomplete = ($: any) =>
+  ($.prompt as {
+    autocomplete: (input: {
+      text: string
+      cursor: number
+      token: string
+      start: number
+    }) => Promise<{ suggestions: { label?: string }[] }>
+  }).autocomplete
 
 describe('mid-prompt', () => {
   test('suggests and expands a template mid-prompt', async ($, on) => {
@@ -51,7 +62,7 @@ describe('mid-prompt', () => {
       text: 'mid-prompt: loaded 2 prompt(s)',
     })
 
-    const ac = await $.prompt.autocomplete({
+    const ac = await autocomplete($)({
       text: 'explain this /as',
       cursor: 16,
       token: '/as',
@@ -70,7 +81,7 @@ describe('mid-prompt', () => {
   test('leaves a leading slash alone in plain prompt text', async ($, on) => {
     fixtures(on, { 'ask.md': 'Do not modify anything.' })
 
-    const ac = await $.prompt.autocomplete({
+    const ac = await autocomplete($)({
       text: '/ask',
       cursor: 4,
       token: '/ask',
@@ -97,7 +108,7 @@ describe('mid-prompt', () => {
   })
 
   test('runs a leading slash template with arguments', async ($, on) => {
-    const { submitted } = fixtures(on, {
+    const { submitted, clock } = fixtures(on, {
       'doctor.md': '---\ndescription: Medical advice\nargument-hint: "[symptom]"\n---\nplease give me medical advice about',
       'args.md': '$1=[$1] $@=[$@] ${1:-DEF}=[${1:-DEF}] ${@:2}=[${@:2}]',
     })
@@ -105,7 +116,7 @@ describe('mid-prompt', () => {
     await run($, 'mid-prompt-reload')
     await run($, 'doctor', 'a headache')
     await run($, 'args', 'one two three')
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await clock.advance(10)
 
     expect(submitted).toEqual([
       'please give me medical advice about\n\na headache',
@@ -115,7 +126,7 @@ describe('mid-prompt', () => {
 
 
   test('expands later tokens in a leading command line', async ($, on) => {
-    const { submitted } = fixtures(on, {
+    const { submitted, clock } = fixtures(on, {
       'ask.md': 'talk only',
       'cat.md': 'favorite cat',
       'color.md': 'favorite color',
@@ -123,7 +134,7 @@ describe('mid-prompt', () => {
 
     await run($, 'mid-prompt-reload')
     await run($, 'ask', '/cat /color')
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await clock.advance(10)
 
     expect(submitted).toEqual(['talk only\n\nfavorite cat favorite color'])
   })

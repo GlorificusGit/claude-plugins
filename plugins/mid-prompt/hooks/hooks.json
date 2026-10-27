@@ -1,4 +1,4 @@
 {
   "description": "Mid-prompt prompt-template autocomplete and expansion",
-  "modules": ["./register.js"]
+  "modules": ["./register.ts"]
 }

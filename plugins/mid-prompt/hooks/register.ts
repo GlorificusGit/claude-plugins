@@ -5,6 +5,8 @@
 // lists them, and a mid-prompt `/name` token opens a suggestion row and is
 // replaced with the template body on submit.
 
+import type { EngineInterface, FsEntry, Register } from 'claude-code'
+
 const NAME = "[A-Za-z0-9_.:-]+"
 const TOKEN_RE = new RegExp(`(^|[\\s\\t([{<\`"'])\\/(${NAME})`, "g")
 const AUTOCOMPLETE_RE = /^\/([A-Za-z0-9_.:-]*)$/
@@ -12,47 +14,54 @@ const COMMAND_RE = /^[A-Za-z0-9_-]{1,64}$/
 const RESERVED = new Set(["prompts", "mid-prompt-reload"])
 const MAX_SUGGESTIONS = 20
 
-let prompts = new Map()
-let commands = new Set()
-let loaded = false
-let loading
+type Prompt = {
+  name: string
+  description: string
+  argumentHint: string
+  body: string
+}
 
-function parsePrompt(filename, raw) {
+let prompts = new Map<string, Prompt>()
+let commands = new Set<string>()
+let loaded = false
+let loading: Promise<void> | undefined
+
+function parsePrompt(filename: string, raw: string): Prompt {
   const frontmatter = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/)
-  const meta = frontmatter ? frontmatter[1] : ""
+  const meta = frontmatter?.[1] ?? ""
   const body = (frontmatter ? raw.slice(frontmatter[0].length) : raw).trim()
   const name = filename.replace(/\.md$/i, "")
 
   let description = ""
   const match = meta.match(/^description:\s*(.*)$/m)
-  if (match) description = match[1].replace(/^['"]|['"]$/g, "").trim()
+  if (match) description = (match[1] ?? "").replace(/^['"]|['"]$/g, "").trim()
   if (!description) description = body.split(/\r?\n/).find((line) => line.trim())?.trim() ?? ""
   if (description.length > 120) description = `${description.slice(0, 117)}...`
 
   const hint = meta.match(/^argument-hint:\s*(.*)$/m)
-  const argumentHint = hint ? hint[1].replace(/^['"]|['"]$/g, "").trim() : ""
+  const argumentHint = hint ? (hint[1] ?? "").replace(/^['"]|['"]$/g, "").trim() : ""
 
   return { name, description, argumentHint, body }
 }
 
-async function loadPrompts($, force = false) {
+async function loadPrompts($: EngineInterface, force = false): Promise<void> {
   if (loaded && !force) return
   if (loading) return loading
 
-  loading = (async () => {
+  const promise = (async () => {
     const home = await $.env.get("HOME")
     const override = await $.env.get("MID_PROMPT_DIR")
     const dir = override || (home ? `${home}/.agents/prompts` : "")
     if (!dir) return
 
-    let entries
+    let entries: FsEntry[]
     try {
       entries = await $.fs.list(dir)
     } catch {
       return
     }
 
-    const next = new Map()
+    const next = new Map<string, Prompt>()
     for (const entry of entries) {
       if (entry.kind !== "file" || !entry.name.toLowerCase().endsWith(".md")) continue
       try {
@@ -68,10 +77,11 @@ async function loadPrompts($, force = false) {
     loading = undefined
   })
 
-  return loading
+  loading = promise
+  return promise
 }
 
-function matches(token) {
+function matches(token: string): Prompt[] {
   const query = token.slice(1).toLowerCase()
   return [...prompts.values()]
     .filter((prompt) => !query || prompt.name.toLowerCase().includes(query))
@@ -79,29 +89,29 @@ function matches(token) {
     .slice(0, MAX_SUGGESTIONS)
 }
 
-function expandArgs(body, args) {
+function expandArgs(body: string, args: string): string {
   if (!args) return body
 
   const argv = (args.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []).map((arg) =>
     arg.replace(/^['"]|['"]$/g, ""),
   )
-  const nth = (n) => argv[Number(n) - 1] ?? ""
+  const nth = (n: string) => argv[Number(n) - 1] ?? ""
   const hasPlaceholder = /\$ARGUMENTS|\$\{\d+:-|\$\{@:\d+\}|\$@|\$\d/.test(body)
 
   let text = body
     .replace(/\$ARGUMENTS/g, args)
-    .replace(/\$\{(\d+):-([^}]*)\}/g, (_, n, fallback) => nth(n) || fallback)
-    .replace(/\$\{@:(\d+)\}/g, (_, n) => argv.slice(Number(n) - 1).join(" "))
-    .replace(/\$(\d+)/g, (_, n) => nth(n))
+    .replace(/\$\{(\d+):-([^}]*)\}/g, (_, n: string, fallback: string) => nth(n) || fallback)
+    .replace(/\$\{@:(\d+)\}/g, (_, n: string) => argv.slice(Number(n) - 1).join(" "))
+    .replace(/\$(\d+)/g, (_, n: string) => nth(n))
     .replace(/\$@/g, args)
 
   if (!hasPlaceholder) text = `${text}\n\n${args}`
   return text
 }
 
-function expand(text) {
+function expand(text: string): string {
   if (!prompts.size || !text.includes("/")) return text
-  return text.replace(TOKEN_RE, (whole, boundary, name, offset) => {
+  return text.replace(TOKEN_RE, (whole: string, boundary: string, name: string, offset: number) => {
     if (offset === 0 && boundary === "") return whole
     let prompt = prompts.get(name)
     let trailing = ""
@@ -116,7 +126,7 @@ function expand(text) {
   })
 }
 
-async function registerCommands($) {
+async function registerCommands($: EngineInterface): Promise<void> {
   await $.command.register({
     name: "prompts",
     description: "List prompt templates",
@@ -146,7 +156,7 @@ async function registerCommands($) {
   }
 }
 
-export function register(on) {
+export const register: Register = (on) => {
   on("session.start", async ($, e, next) => {
     await loadPrompts($, /*force*/ true).catch(() => {})
     await registerCommands($).catch(() => {})
@@ -194,10 +204,10 @@ export function register(on) {
     if (!prompt) return next(e)
 
     // command.run holds the turn, so submit once its answer has landed.
-    setTimeout(() => {
+    $.clock.after(0, () => {
       const text = expand(expandArgs(prompt.body, e.args))
       void $.prompt.submit({ text, asUser: true }).catch(() => {})
-    }, 0)
+    })
     return {}
   })
 
