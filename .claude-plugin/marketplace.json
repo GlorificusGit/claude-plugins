@@ -1,0 +1,13 @@
+{
+  "name": "glory-tools",
+  "owner": {
+    "name": "GlorificusGit"
+  },
+  "description": "Personal Claude Code plugins",
+  "plugins": [
+    {
+      "name": "mid-prompt",
+      "source": "./plugins/mid-prompt"
+    }
+  ]
+}

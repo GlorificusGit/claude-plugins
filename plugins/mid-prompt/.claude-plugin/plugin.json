@@ -1,0 +1,9 @@
+{
+  "name": "mid-prompt",
+  "version": "0.1.0",
+  "description": "Mid-prompt autocomplete and inline expansion for prompt templates in ~/.agents/prompts",
+  "license": "MIT",
+  "author": {
+    "name": "GlorificusGit"
+  }
+}
