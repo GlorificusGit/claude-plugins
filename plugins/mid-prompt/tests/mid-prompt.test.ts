@@ -97,6 +97,40 @@ describe('mid-prompt', () => {
     expect(submit.text).toBe('/ask')
   })
 
+  test(
+    'expands tokens in another command\'s arguments',
+    {
+      plugins: [
+        {
+          name: 'observer',
+          register(on) {
+            on('command.run', { command: 'git' }, ($, e) => ({ text: e.args }))
+          },
+        },
+      ],
+    },
+    async ($, on) => {
+      fixtures(on, { 'push.md': 'push it' })
+
+      await run($, 'mid-prompt-reload')
+
+      expect((await run($, 'git', '/push')).text).toBe('push it')
+    },
+  )
+
+  test('leaves a slash command line to command.run', async ($, on) => {
+    fixtures(on, { 'push.md': 'push it' })
+
+    const submit = await $.prompt.submit({
+      text: '/git /push',
+      wait: false,
+      origin: { kind: 'sdk' },
+      command: { name: 'git', args: '/push' },
+    } as any)
+
+    expect(submit.text).toBe('/git /push')
+  })
+
   test('registers leading slash commands and lists them', async ($, on) => {
     const { registered } = fixtures(on, {
       'ask.md': '---\ndescription: Ask first\nargument-hint: "[topic]"\n---\nDo not modify anything.',

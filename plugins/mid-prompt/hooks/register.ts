@@ -181,14 +181,22 @@ export const register: Register = (on) => {
   })
 
   on("prompt.submit", async ($, e, next) => {
+    // A slash command's line is decided by command.run, not here.
+    if (e.command) return next(e)
     await loadPrompts($).catch(() => {})
     const text = expand(e.text)
     return text === e.text ? next(e) : next({ ...e, text })
   })
 
   on("command.run", async ($, e, next) => {
-    if (!commands.has(e.command)) return next(e)
     await loadPrompts($).catch(() => {})
+
+    if (!commands.has(e.command)) {
+      // Another command's arguments: its body is rendered from these. A leading
+      // token is the command's argument here, not the start-of-message space.
+      const args = expand(` ${e.args}`).slice(1)
+      return args === e.args ? next(e) : next({ ...e, args })
+    }
 
     if (e.command === "prompts") {
       const rows = [...prompts.values()]
