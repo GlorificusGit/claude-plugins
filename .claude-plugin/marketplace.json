@@ -1,5 +1,5 @@
 {
-  "name": "glory-tools",
+  "name": "glory-plugins",
   "owner": {
     "name": "GlorificusGit"
   },
@@ -8,6 +8,10 @@
     {
       "name": "mid-prompt",
       "source": "./plugins/mid-prompt"
+    },
+    {
+      "name": "auto-load-skills",
+      "source": "./plugins/auto-load-skills"
     }
   ]
 }

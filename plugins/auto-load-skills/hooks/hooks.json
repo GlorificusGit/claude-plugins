@@ -1,0 +1,4 @@
+{
+  "description": "Auto-load skills from shell rules",
+  "modules": ["./register.ts"]
+}

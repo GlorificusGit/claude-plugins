@@ -1,0 +1,9 @@
+{
+  "name": "auto-load-skills",
+  "version": "0.1.0",
+  "description": "Load skills into the system prompt from shell rules",
+  "license": "MIT",
+  "author": {
+    "name": "GlorificusGit"
+  }
+}
