@@ -168,6 +168,20 @@ describe('mid-prompt', () => {
     expect(submitted).toEqual(['ask: cost is $5 or ${1:-x}'])
   })
 
+  test('fills placeholders when run without arguments', async ($, on) => {
+    const { submitted, clock } = fixtures(on, {
+      'ask.md': 'explain [$1] ${1:-briefly}',
+      'cat.md': 'favorite cat',
+    })
+
+    await run($, 'mid-prompt-reload')
+    await run($, 'ask')
+    await run($, 'cat')
+    await clock.advance(10)
+
+    expect(submitted).toEqual(['explain [] briefly', 'favorite cat'])
+  })
+
   test('answers a deleted template\'s command', async ($, on) => {
     const files: Record<string, string> = { 'ask.md': 'talk only' }
     fixtures(on, files)

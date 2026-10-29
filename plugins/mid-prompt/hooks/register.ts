@@ -88,8 +88,6 @@ function matches(token: string): Prompt[] {
 }
 
 function expandArgs(body: string, args: string): string {
-  if (!args) return body
-
   const argv = (args.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []).map((arg) =>
     arg.replace(/^['"]|['"]$/g, ""),
   )
@@ -105,7 +103,7 @@ function expandArgs(body: string, args: string): string {
       return i ? nth(i) : args
     },
   )
-  return found ? text : `${text}\n\n${args}`
+  return found || !args ? text : `${text}\n\n${args}`
 }
 
 function expand(text: string): string {
