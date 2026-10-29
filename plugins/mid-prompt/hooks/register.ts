@@ -56,14 +56,8 @@ async function loadPrompts($: EngineInterface, force = false): Promise<void> {
     const home = await $.env.get("HOME")
     const override = await $.env.get("MID_PROMPT_DIR")
     const dir = override || (home ? `${home}/.agents/prompts` : "")
-    if (!dir) return
-
-    let entries: FsEntry[]
-    try {
-      entries = await $.fs.list(dir)
-    } catch {
-      return
-    }
+    // A missing directory loads no templates, so a reload drops the old ones.
+    const entries = dir ? await $.fs.list(dir).catch((): FsEntry[] => []) : []
 
     const next = new Map<string, Prompt>()
     for (const entry of entries) {

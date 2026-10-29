@@ -179,6 +179,19 @@ describe('mid-prompt', () => {
     expect((await run($, 'ask')).text).toBe('mid-prompt: template removed')
   })
 
+  test('drops templates when the directory goes missing', async ($, on) => {
+    let gone = false
+    on('fs.list', { path: DIR }, ($, e, next) => {
+      if (gone) throw new Error(`ENOENT ${DIR}`)
+      return next(e)
+    })
+    fixtures(on, { 'ask.md': 'talk only' })
+
+    expect((await run($, 'mid-prompt-reload')).text).toBe('mid-prompt: loaded 1 prompt(s)')
+    gone = true
+    expect((await run($, 'mid-prompt-reload')).text).toBe('mid-prompt: loaded 0 prompt(s)')
+  })
+
 
   test('expands later tokens in a leading command line', async ($, on) => {
     const { submitted, clock } = fixtures(on, {
