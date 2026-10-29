@@ -182,6 +182,23 @@ describe('mid-prompt', () => {
     expect(submitted).toEqual(['explain [] briefly', 'favorite cat'])
   })
 
+  test('expands a leading template\'s tokens one level, as typed', async ($, on) => {
+    const { submitted, clock } = fixtures(on, { 'a.md': 'x /b', 'b.md': 'y /c', 'c.md': 'z' })
+
+    await run($, 'mid-prompt-reload')
+    await run($, 'a')
+    await clock.advance(10)
+
+    expect(submitted).toEqual(['x y /c'])
+  })
+
+  test('leaves a path that starts with a template name alone', async ($, on) => {
+    fixtures(on, { 'tmp.md': 'scratch' })
+
+    const submit = await $.prompt.submit({ text: 'see /tmp/log', wait: false, origin: { kind: 'sdk' } })
+    expect(submit.text).toBe('see /tmp/log')
+  })
+
   test('answers a deleted template\'s command', async ($, on) => {
     const files: Record<string, string> = { 'ask.md': 'talk only' }
     fixtures(on, files)

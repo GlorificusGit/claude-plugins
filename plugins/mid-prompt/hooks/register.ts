@@ -8,7 +8,7 @@
 import type { EngineInterface, FsEntry, Register } from 'claude-code'
 
 const NAME = "[A-Za-z0-9_.:-]+"
-const TOKEN_RE = new RegExp(`(^|[\\s\\t([{<\`"'])\\/(${NAME})`, "g")
+const TOKEN_RE = new RegExp(`(^|[\\s\\t([{<\`"'])\\/(${NAME})(?!${NAME}|\\/)`, "g")
 const AUTOCOMPLETE_RE = /^\/([A-Za-z0-9_.:-]*)$/
 const COMMAND_RE = /^[A-Za-z0-9_-]{1,64}$/
 const RESERVED = new Set(["prompts", "mid-prompt-reload"])
@@ -216,6 +216,9 @@ export const register: Register = (on) => {
     if (!prompt) return { text: "mid-prompt: template removed" }
 
     // command.run holds the turn, so submit once its answer has landed.
+    // Expanded here because this plugin's prompt.submit hook does not see its
+    // own submit in tests, though the $.prompt.submit docs say the plugin's
+    // other hooks do. If the engine runs it, nested tokens expand twice.
     $.clock.after(0, () => {
       const text = expand(expandArgs(prompt.body, e.args))
       void $.prompt.submit({ text, asUser: true }).catch(() => {})
