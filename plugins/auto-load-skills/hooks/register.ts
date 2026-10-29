@@ -11,8 +11,8 @@
 //
 // Skills are read from the first SKILL.md found in:
 //
-//   <cwd>/.claude/skills/<name>/SKILL.md
-//   $HOME/.claude/skills/<name>/SKILL.md
+//   $CLAUDE_CONFIG_DIR/skills/<name>/SKILL.md   (default $HOME/.claude)
+//   <dir>/.claude/skills/<name>/SKILL.md        (cwd, then each parent below $HOME)
 //   <plugin>/skills/<name>/SKILL.md
 //
 // A skill supplied by another installed plugin is not searched: the hooks API
@@ -35,28 +35,25 @@ const SECTION = 'auto-load-skills:skills'
 const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/
 const TIMEOUT_MS = 5000
 
-/** Cached for the session: undefined until prepared, otherwise the combined blocks or null. */
-let skillBlocks: string | null | undefined
+/** The session's combined blocks, or null; undefined until a prompt first asks. */
+let skillBlocks: Promise<string | null> | undefined
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-function warn($: EngineInterface, message: string): void {
-  $.ui.log(message)
+/** The cwd and each parent, nearest first, stopping before $HOME and /. */
+function projectDirs(cwd: string, home: string): string[] {
+  const dirs: string[] = []
+  for (let dir = cwd; dir && dir !== home; dir = dir.slice(0, dir.lastIndexOf('/'))) {
+    dirs.push(dir)
+  }
+  return dirs
 }
 
-function skillPaths($: EngineInterface, cwd: string, home: string, name: string): string[] {
-  return [
-    `${cwd}/.claude/skills/${name}/SKILL.md`,
-    ...(home ? [`${home}/.claude/skills/${name}/SKILL.md`] : []),
-    `${$.plugin.root}/skills/${name}/SKILL.md`,
-  ]
-}
-
-async function loadSkill($: EngineInterface, cwd: string, home: string, name: string): Promise<string> {
+async function loadSkill($: EngineInterface, dirs: readonly string[], name: string): Promise<string> {
   let lastError: unknown
-  for (const path of skillPaths($, cwd, home, name)) {
+  for (const path of dirs.map((dir) => `${dir}/${name}/SKILL.md`)) {
     let raw: string
     try {
       raw = await $.fs.read(path)
@@ -73,36 +70,59 @@ async function loadSkill($: EngineInterface, cwd: string, home: string, name: st
   throw new Error(`auto-load-skills: cannot read skill "${name}": ${errorMessage(lastError)}`)
 }
 
-async function prepare($: EngineInterface): Promise<string | null> {
-  if (skillBlocks !== undefined) return skillBlocks
-
+/** Runs every rule; `retry` is set when a check failed to run, so the result is not kept. */
+async function build($: EngineInterface): Promise<{ text: string | null; retry: boolean }> {
   const cwd = await $.session.cwd()
   const home = (await $.env.get('HOME')) ?? ''
+  const configDir = (await $.env.get('CLAUDE_CONFIG_DIR')) || (home ? `${home}/.claude` : '')
+  // Claude Code's order: personal skills ahead of project ones.
+  const dirs = [
+    ...(configDir ? [`${configDir}/skills`] : []),
+    ...projectDirs(cwd, home).map((dir) => `${dir}/.claude/skills`),
+    `${$.plugin.root}/skills`,
+  ]
   const blocks: string[] = []
+  let retry = false
 
   for (const rule of RULES) {
     let result: ProcessRunResult
     try {
       result = await $.process.run(['bash', '-c', rule.when], { cwd, timeoutMs: TIMEOUT_MS })
     } catch (err) {
-      warn($, `auto-load-skills: check failed for "${rule.skill}": ${errorMessage(err)}`)
+      $.ui.log(`auto-load-skills: check failed for "${rule.skill}": ${errorMessage(err)}`)
+      retry = true
       continue
     }
     if (result.exitCode !== 0) continue
 
     try {
-      blocks.push(await loadSkill($, cwd, home, rule.skill))
+      blocks.push(await loadSkill($, dirs, rule.skill))
     } catch (err) {
-      warn($, errorMessage(err))
+      $.ui.log(errorMessage(err))
     }
   }
 
-  skillBlocks = blocks.length > 0 ? blocks.join('\n\n') : null
+  return { text: blocks.length > 0 ? blocks.join('\n\n') : null, retry }
+}
+
+/** Shares one build between overlapping prompts; a failed check runs again next prompt. */
+function prepare($: EngineInterface): Promise<string | null> {
+  skillBlocks ??= build($).then(
+    ({ text, retry }) => {
+      if (retry) skillBlocks = undefined
+      return text
+    },
+    (err: unknown) => {
+      skillBlocks = undefined
+      throw err
+    },
+  )
   return skillBlocks
 }
 
 export const register: Register = (on) => {
-  on('session.start', ($, e, next) => {
+  // Fires on exit, /clear and resume; the next prompt checks again.
+  on('session.end', ($, e, next) => {
     skillBlocks = undefined
     return next(e)
   })
@@ -113,7 +133,7 @@ export const register: Register = (on) => {
     if (e.traits.includes('bare')) return result
 
     const text = await prepare($).catch((err) => {
-      warn($, errorMessage(err))
+      $.ui.log(errorMessage(err))
       return null
     })
     if (!text) return result

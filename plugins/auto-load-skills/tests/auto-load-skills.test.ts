@@ -4,6 +4,7 @@ const CWD = '/repo'
 const HOME = '/home/me'
 const CWD_SKILL = `${CWD}/.claude/skills/git/SKILL.md`
 const HOME_SKILL = `${HOME}/.claude/skills/git/SKILL.md`
+const CONFIG_SKILL = '/config/skills/git/SKILL.md'
 const RAW = '---\nname: git\ndescription: Git\n---\nAlways use SSH.\n'
 const PROMPT = { model: 'm', promptModel: 'm', surfaces: [], tools: [], outputStyle: null }
 
@@ -14,16 +15,29 @@ type Run = {
 
 function fixtures(
   on: Parameters<typeof mock.env>[0],
-  options: { exitCode?: number; files?: Record<string, string> } = {},
+  options: {
+    cwd?: string
+    env?: Record<string, string>
+    exitCode?: number
+    files?: Record<string, string>
+    /** Number of checks that throw before they start passing. */
+    failures?: number
+  } = {},
 ) {
   const runs: Run[] = []
   const logs: string[] = []
+  let failures = options.failures ?? 0
 
-  mock.env(on, { HOME })
-  on('session.cwd', () => ({ value: CWD }))
+  mock.env(on, { HOME, ...options.env })
+  on('session.cwd', () => ({ value: options.cwd ?? CWD }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.end', ($, e) => ({ sessionId: e.sessionId }))
   on('process.run', ($, e) => {
     runs.push(e)
+    if (failures > 0) {
+      failures--
+      throw new Error('timed out')
+    }
     return {
       value: {
         exitCode: options.exitCode ?? 0,
@@ -46,8 +60,9 @@ function fixtures(
   })
 
   const start = ($: any) => $.session.start({ cwd: CWD, surface: null, isInteractive: false })
+  const end = ($: any) => $.session.end({ reason: 'clear', sessionId: 's', resume: {} })
 
-  return { runs, logs, start }
+  return { runs, logs, start, end }
 }
 
 describe('auto-load-skills', () => {
@@ -80,12 +95,29 @@ describe('auto-load-skills', () => {
     expect(sections).toEqual([])
   })
 
-  test('falls back to the user skill directory', async ($, on) => {
-    const { start } = fixtures(on, { files: { [HOME_SKILL]: RAW } })
+  test('prefers the personal skill over the project one', async ($, on) => {
+    const { start } = fixtures(on, { files: { [CWD_SKILL]: RAW, [HOME_SKILL]: RAW } })
     await start($)
 
     const { sections } = await $.prompt.compose({ ...PROMPT, traits: [] })
     expect(sections[0]?.text).toContain(`location="${HOME_SKILL}"`)
+  })
+
+  test('reads personal skills from CLAUDE_CONFIG_DIR', async ($, on) => {
+    const files = { [CONFIG_SKILL]: RAW, [HOME_SKILL]: RAW }
+    const { start } = fixtures(on, { env: { CLAUDE_CONFIG_DIR: '/config' }, files })
+    await start($)
+
+    const { sections } = await $.prompt.compose({ ...PROMPT, traits: [] })
+    expect(sections[0]?.text).toContain(`location="${CONFIG_SKILL}"`)
+  })
+
+  test('finds a project skill in a parent directory', async ($, on) => {
+    const { start } = fixtures(on, { cwd: `${CWD}/packages/web`, files: { [CWD_SKILL]: RAW } })
+    await start($)
+
+    const { sections } = await $.prompt.compose({ ...PROMPT, traits: [] })
+    expect(sections[0]?.text).toContain(`location="${CWD_SKILL}"`)
   })
 
   test('warns and skips a missing skill', async ($, on) => {
@@ -113,5 +145,39 @@ describe('auto-load-skills', () => {
     await $.prompt.compose({ ...PROMPT, traits: [] })
     await $.prompt.compose({ ...PROMPT, traits: [] })
     expect(runs).toHaveLength(1)
+  })
+
+  test('shares one check between overlapping prompts', async ($, on) => {
+    const { runs, start } = fixtures(on, { files: { [CWD_SKILL]: RAW } })
+    await start($)
+
+    await Promise.all([
+      $.prompt.compose({ ...PROMPT, traits: [] }),
+      $.prompt.compose({ ...PROMPT, traits: [] }),
+    ])
+    expect(runs).toHaveLength(1)
+  })
+
+  test('checks again after a check fails to run', async ($, on) => {
+    const { runs, logs, start } = fixtures(on, { failures: 1, files: { [CWD_SKILL]: RAW } })
+    await start($)
+
+    const first = await $.prompt.compose({ ...PROMPT, traits: [] })
+    expect(first.sections).toEqual([])
+    expect(logs.some((line) => line.includes('check failed for "git"'))).toBe(true)
+
+    const second = await $.prompt.compose({ ...PROMPT, traits: [] })
+    expect(second.sections).toHaveLength(1)
+    expect(runs).toHaveLength(2)
+  })
+
+  test('checks again after the session ends', async ($, on) => {
+    const { runs, start, end } = fixtures(on, { files: { [CWD_SKILL]: RAW } })
+    await start($)
+
+    await $.prompt.compose({ ...PROMPT, traits: [] })
+    await end($)
+    await $.prompt.compose({ ...PROMPT, traits: [] })
+    expect(runs).toHaveLength(2)
   })
 })

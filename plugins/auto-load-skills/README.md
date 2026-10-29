@@ -9,15 +9,16 @@ first model response. This removes reliance on the model noticing a skill
 description or on a project `CLAUDE.md` telling it to load the skill.
 
 Rules live in `hooks/register.ts`. The default loads the `git` skill whenever
-the session's working directory is a git repository. A check runs once per
-session and its result is cached; a rule whose check exits non-zero injects
-nothing.
+the session's working directory is a git repository. Checks run once per
+session, again after `/clear` or a resume; a rule whose check exits non-zero
+injects nothing. A check that fails to run (a timeout, say) logs a warning and
+runs again on the next prompt.
 
-Skills are read from:
+Skills are read from the first match, in Claude Code's order:
 
 ```text
-<cwd>/.claude/skills/<name>/SKILL.md
-$HOME/.claude/skills/<name>/SKILL.md
+$CLAUDE_CONFIG_DIR/skills/<name>/SKILL.md   (default $HOME/.claude)
+<dir>/.claude/skills/<name>/SKILL.md        (cwd, then each parent below $HOME)
 <plugin>/skills/<name>/SKILL.md
 ```
 
