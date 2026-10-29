@@ -13,6 +13,8 @@ const AUTOCOMPLETE_RE = /^\/([A-Za-z0-9_.:-]*)$/
 const COMMAND_RE = /^[A-Za-z0-9_-]{1,64}$/
 const RESERVED = new Set(["prompts", "mid-prompt-reload"])
 const MAX_SUGGESTIONS = 20
+// Submissions the person wrote; peers, notifications and plugins are left as sent.
+const USER_ORIGINS = new Set(["composer", "bridge", "sdk"])
 
 type Prompt = {
   name: string
@@ -26,22 +28,19 @@ let commands = new Set<string>()
 let loaded = false
 let loading: Promise<void> | undefined
 
+const unquote = (s: string) => s.replace(/^['"]|['"]$/g, "")
+
 function parsePrompt(filename: string, raw: string): Prompt {
   const frontmatter = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/)
   const meta = frontmatter?.[1] ?? ""
   const body = (frontmatter ? raw.slice(frontmatter[0].length) : raw).trim()
   const name = filename.replace(/\.md$/i, "")
+  const field = (key: string) => unquote(meta.match(new RegExp(`^${key}:\\s*(.*)$`, "m"))?.[1] ?? "").trim()
 
-  let description = ""
-  const match = meta.match(/^description:\s*(.*)$/m)
-  if (match) description = (match[1] ?? "").replace(/^['"]|['"]$/g, "").trim()
-  if (!description) description = body.split(/\r?\n/).find((line) => line.trim())?.trim() ?? ""
+  let description = field("description") || (body.split(/\r?\n/).find((line) => line.trim())?.trim() ?? "")
   if (description.length > 120) description = `${description.slice(0, 117)}...`
 
-  const hint = meta.match(/^argument-hint:\s*(.*)$/m)
-  const argumentHint = hint ? (hint[1] ?? "").replace(/^['"]|['"]$/g, "").trim() : ""
-
-  return { name, description, argumentHint, body }
+  return { name, description, argumentHint: field("argument-hint"), body }
 }
 
 async function loadPrompts($: EngineInterface, force = false): Promise<void> {
@@ -59,17 +58,14 @@ async function loadPrompts($: EngineInterface, force = false): Promise<void> {
     // A missing directory loads no templates, so a reload drops the old ones.
     const entries = dir ? await $.fs.list(dir).catch((): FsEntry[] => []) : []
 
-    const next = new Map<string, Prompt>()
-    for (const entry of entries) {
-      if (entry.kind !== "file" || !entry.name.toLowerCase().endsWith(".md")) continue
-      try {
-        const prompt = parsePrompt(entry.name, await $.fs.read(`${dir}/${entry.name}`))
-        if (prompt.body) next.set(prompt.name, prompt)
-      } catch {
-        // A missing or unreadable template is skipped.
-      }
-    }
-    prompts = next
+    const files = entries.filter((entry) => entry.kind === "file" && entry.name.toLowerCase().endsWith(".md"))
+    // A missing or unreadable template reads empty and is skipped.
+    const all = await Promise.all(
+      files.map(async (entry) => parsePrompt(entry.name, await $.fs.read(`${dir}/${entry.name}`).catch(() => ""))),
+    )
+    // Kept sorted, so suggestions and /prompts list by name.
+    const sorted = all.filter((prompt) => prompt.body).sort((a, b) => a.name.localeCompare(b.name))
+    prompts = new Map(sorted.map((prompt) => [prompt.name, prompt]))
     loaded = true
   })().finally(() => {
     loading = undefined
@@ -83,14 +79,11 @@ function matches(token: string): Prompt[] {
   const query = token.slice(1).toLowerCase()
   return [...prompts.values()]
     .filter((prompt) => !query || prompt.name.toLowerCase().includes(query))
-    .sort((a, b) => a.name.localeCompare(b.name))
     .slice(0, MAX_SUGGESTIONS)
 }
 
 function expandArgs(body: string, args: string): string {
-  const argv = (args.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []).map((arg) =>
-    arg.replace(/^['"]|['"]$/g, ""),
-  )
+  const argv = (args.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []).map(unquote)
   const nth = (n: string) => argv[Number(n) - 1] ?? ""
   // One pass, so placeholders inside the inserted args are left as typed.
   let found = false
@@ -119,7 +112,8 @@ function expand(text: string): string {
         if (prompt) trailing = name.slice(trimmed.length)
       }
     }
-    return prompt ? `${boundary}${prompt.body}${trailing}` : whole
+    // A mid-prompt token takes no arguments: placeholders get their defaults or empty.
+    return prompt ? `${boundary}${expandArgs(prompt.body, "")}${trailing}` : whole
   })
 }
 
@@ -179,7 +173,7 @@ export const register: Register = (on) => {
 
   on("prompt.submit", async ($, e, next) => {
     // A slash command's line is decided by command.run, not here.
-    if (e.command) return next(e)
+    if (e.command || !USER_ORIGINS.has(e.origin.kind)) return next(e)
     await loadPrompts($).catch(() => {})
     const text = expand(e.text)
     return text === e.text ? next(e) : next({ ...e, text })
@@ -202,12 +196,10 @@ export const register: Register = (on) => {
     }
 
     if (e.command === "prompts") {
-      const rows = [...prompts.values()]
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((prompt) => {
-          const hint = prompt.argumentHint ? ` ${prompt.argumentHint}` : ""
-          return `/${prompt.name}${hint} - ${prompt.description}`
-        })
+      const rows = [...prompts.values()].map((prompt) => {
+        const hint = prompt.argumentHint ? ` ${prompt.argumentHint}` : ""
+        return `/${prompt.name}${hint} - ${prompt.description}`
+      })
       return { text: rows.length ? rows.join("\n") : "mid-prompt: no templates found" }
     }
 
@@ -219,6 +211,8 @@ export const register: Register = (on) => {
     // Expanded here because this plugin's prompt.submit hook does not see its
     // own submit in tests, though the $.prompt.submit docs say the plugin's
     // other hooks do. If the engine runs it, nested tokens expand twice.
+    // The engine does not expand @file mentions or pasted images in a plugin's
+    // prompt, asUser or not, so a leading command loses them; mid-prompt keeps them.
     $.clock.after(0, () => {
       const text = expand(expandArgs(prompt.body, e.args))
       void $.prompt.submit({ text, asUser: true }).catch(() => {})

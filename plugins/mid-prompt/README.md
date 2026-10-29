@@ -1,7 +1,7 @@
 # mid-prompt
 
 ```bash
-/plugin install mid-prompt --marketplace GlorificusGit/claude-plugins
+claude plugin install mid-prompt@glory-plugins
 ```
 
 Mid-prompt autocomplete and inline expansion for the Markdown prompt templates

@@ -192,6 +192,20 @@ describe('mid-prompt', () => {
     expect(submitted).toEqual(['x y /c'])
   })
 
+  test('fills a mid-prompt template\'s placeholders with defaults', async ($, on) => {
+    fixtures(on, { 'ask.md': 'answer [$ARGUMENTS] ${1:-briefly}' })
+
+    const submit = await $.prompt.submit({ text: 'explain this /ask', wait: false, origin: { kind: 'sdk' } })
+    expect(submit.text).toBe('explain this answer [] briefly')
+  })
+
+  test('leaves submissions the person did not write alone', async ($, on) => {
+    fixtures(on, { 'ask.md': 'talk only' })
+
+    const submit = await $.prompt.submit({ text: 'ran /ask', wait: false, origin: { kind: 'peer' } })
+    expect(submit.text).toBe('ran /ask')
+  })
+
   test('leaves a path that starts with a template name alone', async ($, on) => {
     fixtures(on, { 'tmp.md': 'scratch' })
 
