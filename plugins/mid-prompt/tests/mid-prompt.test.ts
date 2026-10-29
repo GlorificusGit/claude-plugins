@@ -158,6 +158,27 @@ describe('mid-prompt', () => {
     ])
   })
 
+  test('leaves placeholders inside the arguments as typed', async ($, on) => {
+    const { submitted, clock } = fixtures(on, { 'ask.md': 'ask: $ARGUMENTS' })
+
+    await run($, 'mid-prompt-reload')
+    await run($, 'ask', 'cost is $5 or ${1:-x}')
+    await clock.advance(10)
+
+    expect(submitted).toEqual(['ask: cost is $5 or ${1:-x}'])
+  })
+
+  test('answers a deleted template\'s command', async ($, on) => {
+    const files: Record<string, string> = { 'ask.md': 'talk only' }
+    fixtures(on, files)
+
+    await run($, 'mid-prompt-reload')
+    delete files['ask.md']
+    await run($, 'mid-prompt-reload')
+
+    expect((await run($, 'ask')).text).toBe('mid-prompt: template removed')
+  })
+
 
   test('expands later tokens in a leading command line', async ($, on) => {
     const { submitted, clock } = fixtures(on, {

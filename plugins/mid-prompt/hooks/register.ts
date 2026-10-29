@@ -46,7 +46,11 @@ function parsePrompt(filename: string, raw: string): Prompt {
 
 async function loadPrompts($: EngineInterface, force = false): Promise<void> {
   if (loaded && !force) return
-  if (loading) return loading
+  // A forced load waits out one in flight, which may predate the edit.
+  while (loading) {
+    if (!force) return loading
+    await loading.catch(() => {})
+  }
 
   const promise = (async () => {
     const home = await $.env.get("HOME")
@@ -96,17 +100,18 @@ function expandArgs(body: string, args: string): string {
     arg.replace(/^['"]|['"]$/g, ""),
   )
   const nth = (n: string) => argv[Number(n) - 1] ?? ""
-  const hasPlaceholder = /\$ARGUMENTS|\$\{\d+:-|\$\{@:\d+\}|\$@|\$\d/.test(body)
-
-  let text = body
-    .replace(/\$ARGUMENTS/g, args)
-    .replace(/\$\{(\d+):-([^}]*)\}/g, (_, n: string, fallback: string) => nth(n) || fallback)
-    .replace(/\$\{@:(\d+)\}/g, (_, n: string) => argv.slice(Number(n) - 1).join(" "))
-    .replace(/\$(\d+)/g, (_, n: string) => nth(n))
-    .replace(/\$@/g, args)
-
-  if (!hasPlaceholder) text = `${text}\n\n${args}`
-  return text
+  // One pass, so placeholders inside the inserted args are left as typed.
+  let found = false
+  const text = body.replace(
+    /\$ARGUMENTS|\$@|\$\{(\d+):-([^}]*)\}|\$\{@:(\d+)\}|\$(\d+)/g,
+    (_, n?: string, fallback?: string, from?: string, i?: string) => {
+      found = true
+      if (n) return nth(n) || (fallback ?? "")
+      if (from) return argv.slice(Number(from) - 1).join(" ")
+      return i ? nth(i) : args
+    },
+  )
+  return found ? text : `${text}\n\n${args}`
 }
 
 function expand(text: string): string {
@@ -189,6 +194,12 @@ export const register: Register = (on) => {
   })
 
   on("command.run", async ($, e, next) => {
+    if (e.command === "mid-prompt-reload") {
+      await loadPrompts($, /*force*/ true).catch(() => {})
+      await registerCommands($).catch(() => {})
+      return { text: `mid-prompt: loaded ${prompts.size} prompt(s)` }
+    }
+
     await loadPrompts($).catch(() => {})
 
     if (!commands.has(e.command)) {
@@ -209,7 +220,8 @@ export const register: Register = (on) => {
     }
 
     const prompt = prompts.get(e.command)
-    if (!prompt) return next(e)
+    // The engine has no unregister, so a deleted template's command stays listed.
+    if (!prompt) return { text: "mid-prompt: template removed" }
 
     // command.run holds the turn, so submit once its answer has landed.
     $.clock.after(0, () => {
@@ -217,11 +229,5 @@ export const register: Register = (on) => {
       void $.prompt.submit({ text, asUser: true }).catch(() => {})
     })
     return {}
-  })
-
-  on("command.run", { command: "mid-prompt-reload" }, async ($) => {
-    await loadPrompts($, /*force*/ true).catch(() => {})
-    await registerCommands($).catch(() => {})
-    return { text: `mid-prompt: loaded ${prompts.size} prompt(s)` }
   })
 }
