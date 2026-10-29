@@ -1,8 +1,11 @@
 // Auto-load skills from shell rules.
 //
-// Each rule runs its shell check in the session working directory. An exit
-// code of 0 loads that rule's skill into the system prompt, so the model does
-// not have to notice the skill listing or an AGENTS.md line first.
+// Each rule runs its shell check in the session working directory when the
+// first prompt of a conversation is submitted. An exit code of 0 attaches that
+// rule's skill to the prompt in the shape of a typed `/<name>` (the engine
+// labels it hook context), so the model treats the skill as loaded and does
+// not invoke it again. Subagents start without a submitted prompt, so they do
+// not inherit it.
 //
 // Rules live in RULES below. A check is any shell command; redirect its output
 // if it is noisy:
@@ -31,12 +34,11 @@ const RULES: readonly Rule[] = [
   { skill: 'git', when: 'git rev-parse --show-toplevel >/dev/null 2>&1' },
 ]
 
-const SECTION = 'auto-load-skills:skills'
 const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/
 const TIMEOUT_MS = 5000
 
-/** The session's combined blocks, or null; undefined until a prompt first asks. */
-let skillBlocks: Promise<string | null> | undefined
+/** Whether this conversation's first prompt has run the rules. */
+let checked = false
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -51,6 +53,7 @@ function projectDirs(cwd: string, home: string): string[] {
   return dirs
 }
 
+/** The skill as a typed `/<name>` reaches the model. */
 async function loadSkill($: EngineInterface, dirs: readonly string[], name: string): Promise<string> {
   let lastError: unknown
   for (const path of dirs.map((dir) => `${dir}/${name}/SKILL.md`)) {
@@ -64,14 +67,25 @@ async function loadSkill($: EngineInterface, dirs: readonly string[], name: stri
 
     const body = raw.replace(FRONTMATTER, '').trim()
     const baseDir = path.slice(0, path.lastIndexOf('/'))
-    return `<skill name="${name}" location="${path}">\nReferences are relative to ${baseDir}.\n\n${body}\n</skill>`
+    return [
+      `<command-message>${name}</command-message>`,
+      `<command-name>/${name}</command-name>`,
+      '',
+      `Base directory for this skill: ${baseDir}`,
+      '',
+      body,
+    ].join('\n')
   }
 
   throw new Error(`auto-load-skills: cannot read skill "${name}": ${errorMessage(lastError)}`)
 }
 
-/** Runs every rule; `retry` is set when a check failed to run, so the result is not kept. */
-async function build($: EngineInterface): Promise<{ text: string | null; retry: boolean }> {
+/** Runs the rules once per conversation and returns the skills they load. */
+async function load($: EngineInterface): Promise<string[]> {
+  if (checked) return []
+  // Set before the first await, so an overlapping prompt does not run them too.
+  checked = true
+
   const cwd = await $.session.cwd()
   const home = (await $.env.get('HOME')) ?? ''
   const configDir = (await $.env.get('CLAUDE_CONFIG_DIR')) || (home ? `${home}/.claude` : '')
@@ -81,8 +95,7 @@ async function build($: EngineInterface): Promise<{ text: string | null; retry: 
     ...projectDirs(cwd, home).map((dir) => `${dir}/.claude/skills`),
     `${$.plugin.root}/skills`,
   ]
-  const blocks: string[] = []
-  let retry = false
+  const skills: string[] = []
 
   for (const rule of RULES) {
     let result: ProcessRunResult
@@ -90,57 +103,33 @@ async function build($: EngineInterface): Promise<{ text: string | null; retry: 
       result = await $.process.run(['bash', '-c', rule.when], { cwd, timeoutMs: TIMEOUT_MS })
     } catch (err) {
       $.ui.log(`auto-load-skills: check failed for "${rule.skill}": ${errorMessage(err)}`)
-      retry = true
       continue
     }
     if (result.exitCode !== 0) continue
 
     try {
-      blocks.push(await loadSkill($, dirs, rule.skill))
+      skills.push(await loadSkill($, dirs, rule.skill))
     } catch (err) {
       $.ui.log(errorMessage(err))
     }
   }
 
-  return { text: blocks.length > 0 ? blocks.join('\n\n') : null, retry }
-}
-
-/** Shares one build between overlapping prompts; a failed check runs again next prompt. */
-function prepare($: EngineInterface): Promise<string | null> {
-  skillBlocks ??= build($).then(
-    ({ text, retry }) => {
-      if (retry) skillBlocks = undefined
-      return text
-    },
-    (err: unknown) => {
-      skillBlocks = undefined
-      throw err
-    },
-  )
-  return skillBlocks
+  return skills
 }
 
 export const register: Register = (on) => {
-  // Fires on exit, /clear and resume; the next prompt checks again.
+  // Fires on exit, /clear and resume; the next conversation checks again.
   on('session.end', ($, e, next) => {
-    skillBlocks = undefined
+    checked = false
     return next(e)
   })
 
-  on('prompt.compose', async ($, e, next) => {
-    const result = await next(e)
-    // A bare session asks for the one-line prompt; leave it alone.
-    if (e.traits.includes('bare')) return result
-
-    const text = await prepare($).catch((err) => {
+  on('prompt.submit', async ($, e, next) => {
+    const skills = await load($).catch((err) => {
       $.ui.log(errorMessage(err))
-      return null
+      return []
     })
-    if (!text) return result
-
-    return {
-      ...result,
-      sections: [...result.sections, { id: SECTION, text, scope: 'session' as const }],
-    }
+    if (skills.length === 0) return next(e)
+    return next({ ...e, context: [...(e.context ?? []), ...skills] })
   })
 }

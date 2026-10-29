@@ -6,7 +6,7 @@ const CWD_SKILL = `${CWD}/.claude/skills/git/SKILL.md`
 const HOME_SKILL = `${HOME}/.claude/skills/git/SKILL.md`
 const CONFIG_SKILL = '/config/skills/git/SKILL.md'
 const RAW = '---\nname: git\ndescription: Git\n---\nAlways use SSH.\n'
-const PROMPT = { model: 'm', promptModel: 'm', surfaces: [], tools: [], outputStyle: null }
+const PROMPT = { text: 'hi', wait: false, origin: { kind: 'sdk' } } as const
 
 type Run = {
   argv: readonly string[]
@@ -30,7 +30,6 @@ function fixtures(
 
   mock.env(on, { HOME, ...options.env })
   on('session.cwd', () => ({ value: options.cwd ?? CWD }))
-  on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('session.end', ($, e) => ({ sessionId: e.sessionId }))
   on('process.run', ($, e) => {
     runs.push(e)
@@ -53,31 +52,29 @@ function fixtures(
     if (text === undefined) throw new Error(`ENOENT ${e.path}`)
     return { value: text }
   })
-  on('prompt.compose', () => ({ sections: [] }))
+  on('prompt.submit', ($, e) => ({ text: e.text, context: e.context }))
   on('ui.log', ($, e) => {
     logs.push(e.text)
     return { value: undefined }
   })
 
-  const start = ($: any) => $.session.start({ cwd: CWD, surface: null, isInteractive: false })
+  const submit = async ($: any): Promise<readonly string[]> => (await $.prompt.submit(PROMPT)).context ?? []
   const end = ($: any) => $.session.end({ reason: 'clear', sessionId: 's', resume: {} })
 
-  return { runs, logs, start, end }
+  return { runs, logs, submit, end }
 }
 
 describe('auto-load-skills', () => {
-  test('loads a skill when its shell check passes', async ($, on) => {
-    const { runs, start } = fixtures(on, { files: { [CWD_SKILL]: RAW } })
-    await start($)
+  test('attaches a skill as a typed command when its shell check passes', async ($, on) => {
+    const { runs, submit } = fixtures(on, { files: { [CWD_SKILL]: RAW } })
 
-    const { sections } = await $.prompt.compose({ ...PROMPT, traits: [] })
+    const context = await submit($)
 
-    expect(sections).toHaveLength(1)
-    expect(sections[0]?.id).toBe('auto-load-skills:skills')
-    const text = sections[0]?.text ?? ''
-    expect(text).toContain('<skill name="git"')
-    expect(text).toContain(`location="${CWD_SKILL}"`)
-    expect(text).toContain('References are relative to /repo/.claude/skills/git.')
+    expect(context).toHaveLength(1)
+    const text = context[0] ?? ''
+    expect(text).toContain('<command-message>git</command-message>')
+    expect(text).toContain('<command-name>/git</command-name>')
+    expect(text).toContain('Base directory for this skill: /repo/.claude/skills/git')
     expect(text).toContain('Always use SSH.')
     expect(text).not.toContain('description: Git')
 
@@ -87,97 +84,64 @@ describe('auto-load-skills', () => {
     expect(runs[0]?.init?.timeoutMs).toBe(5000)
   })
 
-  test('injects nothing when the shell check fails', async ($, on) => {
-    const { start } = fixtures(on, { exitCode: 1, files: { [CWD_SKILL]: RAW } })
-    await start($)
-
-    const { sections } = await $.prompt.compose({ ...PROMPT, traits: [] })
-    expect(sections).toEqual([])
+  test('attaches nothing when the shell check fails', async ($, on) => {
+    const { submit } = fixtures(on, { exitCode: 1, files: { [CWD_SKILL]: RAW } })
+    expect(await submit($)).toEqual([])
   })
 
   test('prefers the personal skill over the project one', async ($, on) => {
-    const { start } = fixtures(on, { files: { [CWD_SKILL]: RAW, [HOME_SKILL]: RAW } })
-    await start($)
-
-    const { sections } = await $.prompt.compose({ ...PROMPT, traits: [] })
-    expect(sections[0]?.text).toContain(`location="${HOME_SKILL}"`)
+    const { submit } = fixtures(on, { files: { [CWD_SKILL]: RAW, [HOME_SKILL]: RAW } })
+    expect((await submit($))[0]).toContain(`${HOME}/.claude/skills/git`)
   })
 
   test('reads personal skills from CLAUDE_CONFIG_DIR', async ($, on) => {
     const files = { [CONFIG_SKILL]: RAW, [HOME_SKILL]: RAW }
-    const { start } = fixtures(on, { env: { CLAUDE_CONFIG_DIR: '/config' }, files })
-    await start($)
-
-    const { sections } = await $.prompt.compose({ ...PROMPT, traits: [] })
-    expect(sections[0]?.text).toContain(`location="${CONFIG_SKILL}"`)
+    const { submit } = fixtures(on, { env: { CLAUDE_CONFIG_DIR: '/config' }, files })
+    expect((await submit($))[0]).toContain('Base directory for this skill: /config/skills/git')
   })
 
   test('finds a project skill in a parent directory', async ($, on) => {
-    const { start } = fixtures(on, { cwd: `${CWD}/packages/web`, files: { [CWD_SKILL]: RAW } })
-    await start($)
-
-    const { sections } = await $.prompt.compose({ ...PROMPT, traits: [] })
-    expect(sections[0]?.text).toContain(`location="${CWD_SKILL}"`)
+    const { submit } = fixtures(on, { cwd: `${CWD}/packages/web`, files: { [CWD_SKILL]: RAW } })
+    expect((await submit($))[0]).toContain('Base directory for this skill: /repo/.claude/skills/git')
   })
 
   test('warns and skips a missing skill', async ($, on) => {
-    const { logs, start } = fixtures(on)
-    await start($)
-
-    const { sections } = await $.prompt.compose({ ...PROMPT, traits: [] })
-    expect(sections).toEqual([])
+    const { logs, submit } = fixtures(on)
+    expect(await submit($)).toEqual([])
     expect(logs.some((line) => line.includes('cannot read skill "git"'))).toBe(true)
   })
 
-  test('leaves a bare session alone', async ($, on) => {
-    const { runs, start } = fixtures(on, { files: { [CWD_SKILL]: RAW } })
-    await start($)
+  test('attaches once per conversation', async ($, on) => {
+    const { runs, submit } = fixtures(on, { files: { [CWD_SKILL]: RAW } })
 
-    const { sections } = await $.prompt.compose({ ...PROMPT, traits: ['bare'] })
-    expect(sections).toEqual([])
-    expect(runs).toEqual([])
-  })
-
-  test('checks once per session', async ($, on) => {
-    const { runs, start } = fixtures(on, { files: { [CWD_SKILL]: RAW } })
-    await start($)
-
-    await $.prompt.compose({ ...PROMPT, traits: [] })
-    await $.prompt.compose({ ...PROMPT, traits: [] })
+    expect(await submit($)).toHaveLength(1)
+    expect(await submit($)).toEqual([])
     expect(runs).toHaveLength(1)
   })
 
-  test('shares one check between overlapping prompts', async ($, on) => {
-    const { runs, start } = fixtures(on, { files: { [CWD_SKILL]: RAW } })
-    await start($)
+  test('attaches once between overlapping prompts', async ($, on) => {
+    const { runs, submit } = fixtures(on, { files: { [CWD_SKILL]: RAW } })
 
-    await Promise.all([
-      $.prompt.compose({ ...PROMPT, traits: [] }),
-      $.prompt.compose({ ...PROMPT, traits: [] }),
-    ])
+    const [a, b] = await Promise.all([submit($), submit($)])
+    expect(a.length + b.length).toBe(1)
     expect(runs).toHaveLength(1)
   })
 
-  test('checks again after a check fails to run', async ($, on) => {
-    const { runs, logs, start } = fixtures(on, { failures: 1, files: { [CWD_SKILL]: RAW } })
-    await start($)
+  test('warns and does not retry a check that fails to run', async ($, on) => {
+    const { runs, logs, submit } = fixtures(on, { failures: 1, files: { [CWD_SKILL]: RAW } })
 
-    const first = await $.prompt.compose({ ...PROMPT, traits: [] })
-    expect(first.sections).toEqual([])
+    expect(await submit($)).toEqual([])
     expect(logs.some((line) => line.includes('check failed for "git"'))).toBe(true)
-
-    const second = await $.prompt.compose({ ...PROMPT, traits: [] })
-    expect(second.sections).toHaveLength(1)
-    expect(runs).toHaveLength(2)
+    expect(await submit($)).toEqual([])
+    expect(runs).toHaveLength(1)
   })
 
-  test('checks again after the session ends', async ($, on) => {
-    const { runs, start, end } = fixtures(on, { files: { [CWD_SKILL]: RAW } })
-    await start($)
+  test('attaches again after the session ends', async ($, on) => {
+    const { runs, submit, end } = fixtures(on, { files: { [CWD_SKILL]: RAW } })
 
-    await $.prompt.compose({ ...PROMPT, traits: [] })
+    await submit($)
     await end($)
-    await $.prompt.compose({ ...PROMPT, traits: [] })
+    expect(await submit($)).toHaveLength(1)
     expect(runs).toHaveLength(2)
   })
 })

@@ -26,7 +26,7 @@ Restart or run `/reload-plugins` to apply.
 
 - **mid-prompt** — mid-prompt autocomplete and inline expansion for the prompt
   templates in `~/.agents/prompts`.
-- **auto-load-skills** — loads a skill into the system prompt when a shell rule
+- **auto-load-skills** — loads a skill into the first prompt when a shell rule
   matches (the `git` skill inside a git repository, by default).
 
 ## Local testing
