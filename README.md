@@ -10,6 +10,12 @@ claude plugin install mid-prompt@glory-plugins
 claude plugin install auto-load-skills@glory-plugins
 ```
 
+For agy:
+
+```bash
+agy plugin install https://github.com/GlorificusGit/claude-plugins
+```
+
 ## Update
 
 Marketplaces auto-update on startup by default. To update manually:
