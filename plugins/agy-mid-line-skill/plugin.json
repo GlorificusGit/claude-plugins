@@ -1,0 +1,9 @@
+{
+  "name": "agy-mid-line-skill",
+  "version": "0.1.0",
+  "description": "Stub: mid-line skill loading and autocomplete for the agy prompt",
+  "license": "MIT",
+  "author": {
+    "name": "GlorificusGit"
+  }
+}

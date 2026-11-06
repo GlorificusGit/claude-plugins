@@ -10,7 +10,7 @@ claude plugin install mid-prompt@glory-plugins
 claude plugin install auto-load-skills@glory-plugins
 ```
 
-For agy:
+For agy (not working):
 
 ```bash
 agy plugin install https://github.com/GlorificusGit/claude-plugins
