@@ -10,6 +10,13 @@ claude plugin install mid-prompt@glory-plugins
 claude plugin install auto-load-skills@glory-plugins
 ```
 
+For Codex:
+
+```bash
+codex plugin marketplace add GlorificusGit/claude-plugins
+codex plugin add codex-prompts@glory-plugins
+```
+
 For agy (not working):
 
 ```bash
@@ -32,6 +39,8 @@ Restart or run `/reload-plugins` to apply.
 
 - **mid-prompt** — mid-prompt autocomplete and inline expansion for the prompt
   templates in `~/.agents/prompts`.
+- **codex-prompts** — Codex only: the templates in `~/.agents/prompts` as
+  user-invocable skills.
 - **auto-load-skills** — loads a skill into the first prompt when a shell rule
   matches (the `git` skill inside a git repository, by default).
 
@@ -65,7 +74,8 @@ claude plugin install mid-prompt@glory-plugins
 ## Layout
 
 ```text
-.claude-plugin/marketplace.json   marketplace definition
+.claude-plugin/marketplace.json   Claude Code marketplace
+.agents/plugins/marketplace.json  Codex marketplace
 plugins/<name>/                   one plugin per directory
 ```
 

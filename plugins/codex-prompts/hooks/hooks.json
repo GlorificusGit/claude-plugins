@@ -1,0 +1,8 @@
+{
+  "description": "Sync ~/.agents/prompts into user-only Codex skills",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "bash \"$PLUGIN_ROOT/hooks/sync.sh\"" }] }
+    ]
+  }
+}

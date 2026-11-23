@@ -1,0 +1,13 @@
+{
+  "name": "glory-plugins",
+  "owner": {
+    "name": "GlorificusGit"
+  },
+  "description": "Personal Codex plugins",
+  "plugins": [
+    {
+      "name": "codex-prompts",
+      "source": "./plugins/codex-prompts"
+    }
+  ]
+}

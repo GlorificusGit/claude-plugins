@@ -1,0 +1,9 @@
+{
+  "name": "codex-prompts",
+  "version": "0.1.0",
+  "description": "Codex: prompt templates in ~/.agents/prompts as user-invocable skills",
+  "license": "MIT",
+  "author": {
+    "name": "GlorificusGit"
+  }
+}
