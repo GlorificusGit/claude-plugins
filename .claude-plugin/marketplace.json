@@ -12,6 +12,10 @@
     {
       "name": "auto-load-skills",
       "source": "./plugins/auto-load-skills"
+    },
+    {
+      "name": "tools",
+      "source": "./plugins/tools"
     }
   ]
 }

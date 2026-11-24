@@ -8,6 +8,7 @@ Personal Claude Code plugins, distributed as a marketplace.
 claude plugin marketplace add GlorificusGit/claude-plugins
 claude plugin install mid-prompt@glory-plugins
 claude plugin install auto-load-skills@glory-plugins
+claude plugin install tools@glory-plugins
 ```
 
 For Codex:
@@ -31,6 +32,7 @@ Marketplaces auto-update on startup by default. To update manually:
 claude plugin marketplace update glory-plugins
 claude plugin update mid-prompt@glory-plugins
 claude plugin update auto-load-skills@glory-plugins
+claude plugin update tools@glory-plugins
 ```
 
 Restart or run `/reload-plugins` to apply.
@@ -43,6 +45,8 @@ Restart or run `/reload-plugins` to apply.
   user-invocable skills.
 - **auto-load-skills** — loads a skill into the first prompt when a shell rule
   matches (the `git` skill inside a git repository, by default).
+- **tools** — `/tools` lists the tools the model can call, grouped by builtin
+  or MCP server.
 
 ## Local testing
 

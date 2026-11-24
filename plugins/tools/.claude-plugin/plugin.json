@@ -1,0 +1,9 @@
+{
+  "name": "tools",
+  "version": "0.1.0",
+  "description": "/tools lists the tools the model can call",
+  "license": "MIT",
+  "author": {
+    "name": "GlorificusGit"
+  }
+}
